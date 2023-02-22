@@ -1,0 +1,5 @@
+transformers
+evaluate
+rouge_score
+nltk
+wandb
