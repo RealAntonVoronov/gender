@@ -3,17 +3,15 @@ from argparse import ArgumentParser
 
 import evaluate
 import nltk
-nltk.download('punkt')
 import numpy as np
-import pandas as pd
 import wandb
 from nltk.tokenize import sent_tokenize
-from sklearn.model_selection import train_test_split
-from torch.utils.data import Dataset
 from transformers import (BioGptTokenizer, BioGptForCausalLM,
                           DataCollatorForSeq2Seq, Seq2SeqTrainingArguments, Seq2SeqTrainer)
 
+from data import create_dataset
 
+nltk.download('punkt')
 rouge_score = evaluate.load("rouge")
 
 
@@ -25,7 +23,19 @@ def parse_args():
                         default='microsoft/biogpt')
     parser.add_argument("--dataset", required=True, choices=['biocarta', 'kegg', 'wp', 'pid', 'reactome'],
                         help="dataset for fine-tuning and evaluation")
-    parser.add_argument("--data_dir", )
+    parser.add_argument("--data_dir", required=True, help='path to the folder with clusters and gene annotations')
+    parser.add_argument("--n_permutations", default=10, type=int,
+                        help="variable for data augmentation. "
+                             "Defines how many genes permutations of the same cluster will be used for one description")
+    parser.add_argument("--negative_frac", default=0.5, type=float,
+                        help="Data augmentation and regularization variable. "
+                             "Defines how many negative examples will be generated for a dataset. "
+                             "E.g., negative_frac = 0.5 means that in the resulting dataset "
+                             "there will be 1/3 of negative examples.")
+    parser.add_argument("--negative_description_strategy", default='default', choices=['default'],
+                        help="Strategy for generating descriptions of negative clusters. "
+                             "Default strategy: annotating every cluster with "
+                             "'This group of genes does not group into a meaningful cluster.'")
     parser.add_argument("--max_output_length", help="max length of the generated descriptions", default=128, type=int)
     parser.add_argument("--train_batch_size", help="train batch size per 1 GPU", default=4, type=int)
     parser.add_argument("--eval_batch_size", help="validation batch size per 1 GPU", default=4, type=int)
@@ -45,67 +55,6 @@ def parse_args():
     args = parser.parse_args()
 
     return args
-
-
-class GeneData(Dataset):
-    def __init__(self, clusters, tokenizer, genes_info,
-                 max_input_length=768,
-                 max_output_length=128,
-                 max_model_length=1024,
-                 ):
-        super().__init__()
-        self.tokenizer = tokenizer
-        self.max_model_length = max_model_length
-        assert max_input_length + max_output_length + 3 < max_model_length
-
-        texts = [". ".join([genes_info[genes_info['ncbi_id'] == gene_id]['description'].item()
-                            if gene_id in genes_info['ncbi_id'].value_counts() else "unknown gene"
-                            for gene_id in cluster['genes']])
-                 for _, cluster in clusters.iterrows()]
-
-        self.input = tokenizer(texts, truncation=True, max_length=max_input_length)['input_ids']
-        self.output = tokenizer(list(clusters['full'].values),
-                                truncation=True, max_length=max_output_length)['input_ids']
-
-    def __len__(self):
-        return len(self.input)
-
-    def __getitem__(self, idx):
-        input_ids = self.input[idx] + self.tokenizer("summarize: ")['input_ids'] + self.output[idx]
-        labels = input_ids
-        return {"input_ids": input_ids,
-                "attention_mask": [1] * len(input_ids),
-                "labels": labels,
-                }
-
-
-def create_dataset(tokenizer, dataset, max_output_length=128, seed=37):
-    clusters = {'name': [], 'genes': []}
-
-    with open(f"../data/bio/clusters/{dataset}.txt") as inp:
-        for line in inp.readlines():
-            name, _, *genes = line.split("\t")
-            clusters['name'].append(name)
-            clusters['genes'].append([int(x.strip()) for x in genes])
-
-    clusters = pd.DataFrame(clusters)
-    cluster_desc = pd.read_csv(f"../data/bio/clusters/{dataset}_descriptions.csv")
-    cluster_desc.columns = ['name', 'brief', 'full']
-    clusters = pd.merge(clusters, cluster_desc)
-    # TODO! drop rows where `full` is empty
-
-    genes_info = pd.read_csv("../data/bio/genes/genes_info.csv")
-    # TODO! add augmentation
-
-    # TODO! add negative samples
-
-    train, val = train_test_split(clusters, random_state=seed, test_size=0.2)
-    train = GeneData(clusters=train, tokenizer=tokenizer, genes_info=genes_info,
-                     max_output_length=max_output_length)
-    val = GeneData(clusters=val, tokenizer=tokenizer, genes_info=genes_info,
-                   max_output_length=max_output_length)
-
-    return train, val
 
 
 def compute_metrics(eval_pred, tokenizer, rouge_score):
@@ -132,19 +81,25 @@ def main(args):
     model = BioGptForCausalLM.from_pretrained(args.model_name_or_path)
     tokenizer = BioGptTokenizer.from_pretrained(args.model_name_or_path)
 
-    train_dataset, eval_dataset = create_dataset(tokenizer=tokenizer, dataset=args.dataset,
+    train_dataset, eval_dataset = create_dataset(tokenizer=tokenizer,
+                                                 dataset=args.dataset,
+                                                 data_dir=args.data_dir,
+                                                 n_permutations=args.n_permutations,
+                                                 negative_frac=args.negative_frac,
+                                                 negative_description_strategy=args.negative_description_strategy,
                                                  max_output_length=args.max_output_length,
-                                                 seed=args.seed)
+                                                 seed=args.seed,
+                                                 )
 
     collator = DataCollatorForSeq2Seq(tokenizer)
     effective_batch_size = args.train_batch_size * args.gradient_accumulation_steps
-
+    n_epoch_steps = len(train_dataset) // effective_batch_size
     trainer_args = Seq2SeqTrainingArguments(
         output_dir=args.exp_name,
         overwrite_output_dir=True,
-        eval_steps=10,
-        save_steps=100,
-        evaluation_strategy="epoch",
+        eval_steps=n_epoch_steps//3,
+        save_steps=n_epoch_steps//3,
+        evaluation_strategy='steps',
         learning_rate=args.learning_rate,
         per_device_train_batch_size=args.train_batch_size,
         per_device_eval_batch_size=args.eval_batch_size,
@@ -180,4 +135,5 @@ if __name__ == '__main__':
     else:
         args.exp_name = 'out'
     os.makedirs(args.exp_name, exist_ok=True)
+    np.random.seed(args.seed)
     main(args)
