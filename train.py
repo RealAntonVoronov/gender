@@ -1,15 +1,17 @@
 import os
+from functools import partial
 from argparse import ArgumentParser
 
 import evaluate
 import nltk
 import numpy as np
 import pandas as pd
+import torch
 import wandb
 from nltk.tokenize import sent_tokenize
 from sklearn.model_selection import train_test_split
 from transformers import (BioGptTokenizer, BioGptForCausalLM, DataCollatorForSeq2Seq,
-                          Trainer, DataCollatorForLanguageModeling, TrainingArguments)
+                          Trainer, TrainingArguments)
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -17,6 +19,17 @@ from data import create_data, GeneDataset
 
 nltk.download('punkt')
 rouge_score = evaluate.load("rouge")
+
+
+def collate_fn(tokenizer, batch):
+    pad_ids = {'input_ids': tokenizer.pad_token_id, 'attention_mask': 0, 'labels': -100}
+
+    max_len = np.max([len(x['input_ids']) for x in batch])
+    start_positions = [max_len - len(x['input_ids']) for x in batch]
+
+    return {k: torch.tensor([[pad_ids[k] for _ in range(start_positions[i])] + batch[i][k]
+                             for i in range(len(batch))], dtype=torch.long)
+            for k in pad_ids}
 
 
 def parse_args():
@@ -52,7 +65,7 @@ def parse_args():
                         help="Strategy for generating descriptions of negative clusters. "
                              "Default strategy: annotating every cluster with "
                              "'This group of genes does not group into a meaningful cluster.'")
-    parser.add_argument("--max_output_length", help="Max length of the generated descriptions.", default=256, type=int)
+    parser.add_argument("--max_input_length", help="Max length of the input sequence.", default=400, type=int)
     # training arguments
     parser.add_argument("--train_batch_size", help="Train batch size per 1 GPU.", default=4, type=int)
     parser.add_argument("--eval_batch_size", help="Validation batch size per 1 GPU.", default=4, type=int)
@@ -120,7 +133,7 @@ def train(args):
     train_dataset = GeneDataset(clusters=train_cluster,
                                 tokenizer=tokenizer,
                                 genes_info=genes_info,
-                                max_output_length=args.max_output_length,
+                                max_input_length=args.max_input_length,
                                 max_model_length=max_model_length,
                                 method=args.method,
                                 prompt=args.prompt,
@@ -128,13 +141,12 @@ def train(args):
     eval_dataset = GeneDataset(clusters=val_cluster,
                                tokenizer=tokenizer,
                                genes_info=genes_info,
-                               max_output_length=args.max_output_length,
+                               max_input_length=args.max_input_length,
                                max_model_length=max_model_length,
                                method=args.method,
                                prompt=args.prompt,
                                )
 
-    collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
     effective_batch_size = args.train_batch_size * args.gradient_accumulation_steps
     n_epoch_steps = len(train_dataset) // effective_batch_size
 
@@ -163,12 +175,12 @@ def train(args):
         trainer_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        data_collator=collator,
+        data_collator=partial(collate_fn, tokenizer),
         tokenizer=tokenizer,
     )
     trainer.train()
     # evaluate
-    test_clusters = create_data(dataset=args.dataset,
+    test_clusters = create_data(dataset='kegg',
                                 data_dir=args.data_dir,
                                 n_permutations=0,
                                 negative_frac=0.,
@@ -176,7 +188,7 @@ def train(args):
     test_dataset = GeneDataset(clusters=test_clusters,
                                tokenizer=tokenizer,
                                genes_info=genes_info,
-                               max_output_length=args.max_output_length,
+                               max_input_length=args.max_input_length,
                                method=args.method,
                                prompt=args.prompt,
                                training=False,
