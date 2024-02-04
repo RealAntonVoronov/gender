@@ -20,7 +20,7 @@ class GeneDataset(Dataset):
         self.prompt = prompt
         self.tokenizer = tokenizer
 
-        prompt_len = len(tokenizer(prompt)['input_ids'])
+        prompt_len = len(tokenizer(prompt, add_special_tokens=False)['input_ids'])
         max_output_length = max_model_length - max_input_length - prompt_len - 1
 
         id_to_description = {row['ncbi_id']: row['description'] for _, row in genes_info.iterrows()}
@@ -30,8 +30,11 @@ class GeneDataset(Dataset):
 
         self.input = tokenizer(texts, add_special_tokens=False,
                                truncation=True, max_length=max_input_length)['input_ids']
-        self.output = tokenizer(list(clusters['full'].values), add_special_tokens=False,
-                                truncation=True, max_length=max_output_length)['input_ids']
+        if 'full' in clusters:
+            self.output = tokenizer(clusters['full'].tolist(), add_special_tokens=False,
+                                    truncation=True, max_length=max_output_length)['input_ids']
+        else:
+            self.output = None
 
     def __len__(self):
         return len(self.input)
@@ -49,7 +52,12 @@ class GeneDataset(Dataset):
                 raise NotImplementedError
         else:
             input_ids = self.input[idx] + self.tokenizer(self.prompt, add_special_tokens=False)['input_ids']
-            labels = self.output[idx]
+            if self.output is not None:
+                labels = self.output[idx]
+            else:
+                return {"input_ids": input_ids,
+                        "attention_mask": [1] * len(input_ids),
+                        }
 
         return {"input_ids": input_ids,
                 "attention_mask": [1] * len(input_ids),
