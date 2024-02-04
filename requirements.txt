@@ -3,3 +3,5 @@ evaluate
 rouge_score
 nltk
 wandb
+gdown
+sacremoses
