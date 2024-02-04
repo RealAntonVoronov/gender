@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from data import create_data, GeneDataset
+from inference import inference
 
 nltk.download('punkt')
 rouge_score = evaluate.load("rouge")
@@ -102,19 +103,6 @@ def compute_metrics(eval_pred, eval_dataset):
     # return {k: round(v, 4) for k, v in result.items()}
 
 
-def generate(model, tokenizer, dataloader, max_length=1024, num_beams=3):
-    # TODO! return more than 1 hypotheses
-    results = []
-    for batch in tqdm(dataloader):
-        inputs = batch['input_ids']
-        output = model.generate(**{k: v.to(model.device) for k, v in batch.items()},
-                                max_length=max_length, num_beams=num_beams)
-        # replace prefix part in output with special tokens to skip them
-        output[:, :len(inputs[0])] = tokenizer.pad_token_id
-        results.extend(tokenizer.batch_decode(output, skip_special_tokens=True))
-    return results
-
-
 def train(args):
     model = BioGptForCausalLM.from_pretrained(args.model_name_or_path)
     tokenizer = BioGptTokenizer.from_pretrained(args.model_name_or_path, padding_side='left')
@@ -193,10 +181,7 @@ def train(args):
                                prompt=args.prompt,
                                training=False,
                                )
-    test_collator = DataCollatorForSeq2Seq(tokenizer)
-    test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, collate_fn=test_collator, shuffle=False)
-
-    test_preds = generate(model, tokenizer, test_dataloader, max_length=max_model_length, num_beams=args.num_beams)
+    test_preds = inference(model, tokenizer, test_dataset, args.eval_batch_size, max_model_length, args.num_beams)
     test_labels = tokenizer.batch_decode(test_dataset.output, skip_special_tokens=True)
     assert len(test_preds) == len(test_labels)
     with open(f"{args.output_dir}/test_preds", "w") as f_preds, open(f"{args.output_dir}/test_labels", "w") as f_labels:
