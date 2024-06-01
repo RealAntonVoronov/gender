@@ -56,7 +56,13 @@ def main(args):
     model.to(device)
     max_model_length = model.config.max_position_embeddings
 
-    test_dataframe = pd.read_csv(args.test_file, sep='\t')
+    if args.test_file.endswith('.tsv'):
+        sep = '\t'
+    else:
+        sep = ','
+    test_dataframe = pd.read_csv(args.test_file, sep=sep)
+    test_dataframe = test_dataframe.loc[test_dataframe['cluster'] != 'Singleton']
+    test_dataframe['cluster'] = test_dataframe['cluster'].astype(int)
 
     genes_info = pd.read_csv("data/genes/genes_info.csv")
     symbol_to_id = {row['symbol']: row['ncbi_id'] for _, row in genes_info.iterrows()}
