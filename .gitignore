@@ -127,4 +127,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# training logs
 wandb/
+events.*
+
+# trained models weights
+checkpoint*
