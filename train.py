@@ -40,7 +40,7 @@ def parse_args():
                         choices=['microsoft/biogpt', 'microsoft/biogpt-large'],
                         help="Type of model to train.",
                         default='microsoft/biogpt')
-    parser.add_argument("--dataset", required=True, choices=['biocarta', 'kegg', 'wp', 'pid', 'reactome'],
+    parser.add_argument("--dataset", required=True, choices=['biocarta', 'kegg', 'wp', 'pid', 'reactome'], nargs='+',
                         help="Dataset for fine-tuning and evaluation")
     parser.add_argument("--data_dir", required=True, help='Path to the folder with clusters and gene annotations.')
     parser.add_argument("--method", default='hard_prompt',
@@ -155,7 +155,7 @@ def train(args):
         seed=args.seed,
         fp16=args.fp16,
         deepspeed=args.deepspeed,
-        report_to='wandb',
+        report_to=None,
     )
 
     trainer = Trainer(
@@ -191,15 +191,16 @@ def train(args):
 
     metrics = compute_metrics(test_preds, test_labels)
     print(f"ROUGE scores: {metrics}")
-    for k, v in metrics.items():
-        wandb.run.summary[k] = v
+    # for k, v in metrics.items():
+    #     wandb.run.summary[k] = v
 
 
 if __name__ == '__main__':
     args = parse_args()
-    wandb.init(entity='antonvoronov', project='GENDER')
+    # wandb.init(entity='antonvoronov', project='GENDER')
     if args.exp_name is not None:
-        wandb.run.name = args.exp_name
+        # wandb.run.name = args.exp_name
+        pass
     else:
         args.exp_name = 'out'
     args.output_dir = os.path.join('results', args.exp_name)

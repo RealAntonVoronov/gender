@@ -72,15 +72,9 @@ def sample_random_description(strategy):
         # TODO! add other strategies (templates, paraphrasing)
         raise NotImplementedError
 
-
-def create_data(dataset,
-                data_dir,
-                n_permutations=10,
-                negative_frac=0.3,
-                negative_description_strategy='default',
-                ):
+def parse_dataset(dataset, data_dir='data'):
     clusters = {'name': [], 'genes': []}
-
+    
     with open(f"{data_dir}/clusters/{dataset}.txt") as inp:
         for line in inp.readlines():
             name, _, *genes = line.split("\t")
@@ -93,6 +87,23 @@ def create_data(dataset,
     clusters = pd.merge(clusters, cluster_desc)
     clusters = clusters.drop(clusters[clusters['full'] == '\xa0'].index)
     clusters.reset_index(drop=True, inplace=True)
+
+    return clusters
+
+def create_data(dataset,
+                data_dir,
+                n_permutations=10,
+                negative_frac=0.3,
+                negative_description_strategy='default',
+                ):
+
+    if isinstance(dataset, list):
+        clusters = []
+        for one_dataset in dataset:
+            clusters.append(parse_dataset(one_dataset, data_dir=data_dir))
+        clusters = pd.concat(clusters)
+    else:
+        clusters = parse_dataset(dataset, data_dir=data_dir)
 
     # add augmentation
     if n_permutations > 0:
