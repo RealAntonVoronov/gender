@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from torch.utils.data import Dataset
 
+MIN_CLUSTER_LEN_FOR_SPLIT = 10
 
 class GeneDataset(Dataset):
     def __init__(self,
@@ -22,6 +23,7 @@ class GeneDataset(Dataset):
 
         prompt_len = len(tokenizer(prompt, add_special_tokens=False)['input_ids'])
         max_output_length = max_model_length - max_input_length - prompt_len - 1
+        print(f"max output length: {max_output_length}")
 
         id_to_description = {row['ncbi_id']: row['description'] for _, row in genes_info.iterrows()}
 
@@ -90,11 +92,17 @@ def parse_dataset(dataset, data_dir='data'):
 
     return clusters
 
+def pd_row_new_cluster(name, genes, brief_description, full_description):
+    return {'name': name, 'genes': genes,
+            'brief': brief_description, 'full': full_description,
+            }
+
 def create_data(dataset,
                 data_dir,
                 n_permutations=10,
                 negative_frac=0.3,
                 negative_description_strategy='default',
+                n_short_subsamples=0,
                 ):
 
     if isinstance(dataset, list):
@@ -109,11 +117,29 @@ def create_data(dataset,
     if n_permutations > 0:
         new_clusters = []
         for i, row in clusters.iterrows():
-            new_clusters.extend([{'name': row['name'], 'genes': np.random.permutation(row.genes),
-                                  'brief': row.brief, 'full': row.full}
-                                 for _ in range(n_permutations)])
+            for _ in range(n_permutations):
+                new_clusters.append(pd_row_new_cluster(row.name,
+                                                       np.random.permutation(row['genes']),
+                                                       row['brief'], row['full'],
+                                                       ))
         clusters = pd.concat([clusters, pd.DataFrame(new_clusters).reset_index(drop=True)])
 
+    # augmentation for better short clusters
+    new_clusters = []
+    for _, cluster in clusters.iterrows():
+        cluster_len = len(cluster['genes'])
+        if cluster_len > MIN_CLUSTER_LEN_FOR_SPLIT:
+            subsample_size = round(0.5 * cluster_len)
+            for seed in range(n_short_subsamples):
+                np.random.seed(seed)
+                new_genes = np.random.choice(cluster['genes'], subsample_size,
+                                             replace=False,
+                                             )
+                new_clusters.append(pd_row_new_cluster(cluster['name'], new_genes,
+                                                       cluster['brief'],
+                                                       cluster['full']),
+                                                       )
+    clusters = pd.concat([clusters, pd.DataFrame(new_clusters).reset_index(drop=True)])
 
     # add negative samples
     negative_clusters = []
