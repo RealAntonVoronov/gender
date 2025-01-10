@@ -66,6 +66,7 @@ def parse_args():
                         help="Strategy for generating descriptions of negative clusters. "
                              "Default strategy: annotating every cluster with "
                              "'This group of genes does not group into a meaningful cluster.'")
+    parser.add_argument("--n_short_subsamples", default=0, type=int)
     parser.add_argument("--max_input_length", help="Max length of the input sequence.", default=400, type=int)
     # training arguments
     parser.add_argument("--train_batch_size", help="Train batch size per 1 GPU.", default=4, type=int)
@@ -114,6 +115,7 @@ def train(args):
                              n_permutations=args.n_permutations,
                              negative_frac=args.negative_frac,
                              negative_description_strategy=args.negative_description_strategy,
+                             n_short_subsamples=args.n_short_subsamples,
                              )
 
     genes_info = pd.read_csv(f"{args.data_dir}/genes/genes_info.csv")
@@ -197,13 +199,13 @@ def train(args):
 
 if __name__ == '__main__':
     args = parse_args()
-    # wandb.init(entity='antonvoronov', project='GENDER')
+    wandb.init(entity='antonvoronov', project='GENDER')
     if args.exp_name is not None:
-        # wandb.run.name = args.exp_name
+        wandb.run.name = args.exp_name
         pass
     else:
         args.exp_name = 'out'
     args.output_dir = os.path.join('results', args.exp_name)
-    os.makedirs(args.exp_name, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
     np.random.seed(args.seed)
     train(args)
