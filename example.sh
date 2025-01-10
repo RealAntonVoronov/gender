@@ -1,0 +1,12 @@
+CUDA_VISIBLE_DEVICES=6 python train.py -m microsoft/biogpt-large \
+--dataset biocarta kegg \
+--data_dir data \
+--n_permutations 20 \
+--negative_frac 0.05 \
+--max_input_length 600 \
+--n_short_subsamples 5 \
+--train_batch_size 2 \
+--eval_batch_size 4 \
+--fp16 \
+--gradient_accumulation_steps 16 \
+--exp_name large_biocarta_kegg_nperm20_negfrac0.05_input_length600_nshort5_bs32
