@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from data import GeneDataset, parse_dataset
 
 
+@torch.inference_mode()
 def generate(model, tokenizer, batch, max_length=1024, num_beams=1):
     # TODO! return more than 1 hypotheses
     inputs = batch['input_ids']
