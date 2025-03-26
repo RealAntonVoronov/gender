@@ -10,15 +10,17 @@ import torch
 import wandb
 from nltk.tokenize import sent_tokenize
 from sklearn.model_selection import train_test_split
-from transformers import (BioGptTokenizer, BioGptForCausalLM, DataCollatorForSeq2Seq,
+from transformers import (BioGptTokenizer, BioGptForCausalLM,
                           Trainer, TrainingArguments)
-from torch.utils.data import DataLoader
-from tqdm import tqdm
+from datasets import Dataset
+from tqdm import tqdm, trange
 
-from data import create_data, GeneDataset
+from data_utils import create_data, augment_data
+from dataset import GeneDataset
 from inference import inference
 
 nltk.download('punkt')
+nltk.download('punkt_tab')
 rouge_score = evaluate.load("rouge")
 
 
@@ -54,10 +56,10 @@ def parse_args():
     # generation arguments
     parser.add_argument("--num_beams", default=3, type=int, help="Number of beams to use in beam search decoding.")
     # dataset arguments
-    parser.add_argument("--n_permutations", default=10, type=int,
+    parser.add_argument("--n_permutations", default=20, type=int,
                         help="Data augmentation variable. "
                              "Defines how many gene permutations of the same cluster will be used for one description.")
-    parser.add_argument("--negative_frac", default=0.5, type=float,
+    parser.add_argument("--negative_frac", default=0.05, type=float,
                         help="Data augmentation and regularization variable. "
                              "Defines how many negative examples will be generated for a dataset. "
                              "E.g., negative_frac = 0.5 means that in the resulting dataset "
@@ -89,19 +91,40 @@ def parse_args():
     return args
 
 
-def compute_metrics(eval_pred, eval_dataset):
-    # ROUGE expects a newline after each sentence
-    decoded_preds = ["\n".join(sent_tokenize(pred.strip())) for pred in eval_pred]
-    decoded_labels = ["\n".join(sent_tokenize(label.strip())) for label in eval_dataset]
+def compute_rouge(preds, labels):
+    # decoded_preds = ["\n".join(pred.strip()) for pred in preds]
+    # print(decoded_preds[0])
+    # decoded_labels = ["\n".join(label.strip()) for label in labels]
     # Compute ROUGE scores
     result = rouge_score.compute(
-        predictions=decoded_preds, references=decoded_labels, use_stemmer=True
+        predictions=preds,
+        references=labels,
+        use_stemmer=True
     )
-    return result
-
     # Extract the median scores
-    # result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
-    # return {k: round(v, 4) for k, v in result.items()}
+    result = {key: value * 100 for key, value in result.items()}
+    return {k: round(v, 4) for k, v in result.items()}
+
+
+def preprocess_logits_for_metrics(logits, labels):
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    return logits.argmax(dim=-1)
+
+
+def compute_metrics(eval_preds, tokenizer):
+    preds, labels = eval_preds
+    # Replace -100 in the preds as we can't decode them
+    preds = np.where(preds != -100, preds, tokenizer.pad_token_id)
+    # Decode generated summaries into text
+    decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
+    # Replace -100 in the labels as we can't decode them
+    labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+    # Decode reference summaries into text
+    decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+    rouge = compute_rouge(decoded_preds, decoded_labels)
+    wandb.log({"preds_0": decoded_preds[0], "labels_0": decoded_labels[0]})
+    return rouge 
 
 
 def train(args):
@@ -110,17 +133,22 @@ def train(args):
     model.cuda()
     max_model_length = model.config.max_position_embeddings
 
-    train_data = create_data(dataset=args.dataset,
-                             data_dir=args.data_dir,
-                             n_permutations=args.n_permutations,
-                             negative_frac=args.negative_frac,
-                             negative_description_strategy=args.negative_description_strategy,
-                             n_short_subsamples=args.n_short_subsamples,
-                             )
-
+    clusters = create_data(dataset=args.dataset, data_dir=args.data_dir)
+    train_clusters, val_clusters = train_test_split(clusters, random_state=args.seed, test_size=0.2)
+    val_clusters.to_csv(f"{args.data_dir}/test/val_clusters.csv", index=False)
+    genes_full_description = pd.read_csv(f"{args.data_dir}/genes/gene_descriptions.csv")
+    train_clusters = augment_data(train_clusters,
+                                  id_to_full_description=genes_full_description,
+                                  n_permutations=args.n_permutations,
+                                  negative_frac=args.negative_frac,
+                                  negative_description_strategy=args.negative_description_strategy,
+                                  n_short_subsamples=args.n_short_subsamples,
+                                  placeholder_probability=1,
+                                  )
+    print(len(train_clusters), len(val_clusters))
     genes_info = pd.read_csv(f"{args.data_dir}/genes/genes_info.csv")
-    train_cluster, val_cluster = train_test_split(train_data, random_state=args.seed, test_size=0.2)
-    train_dataset = GeneDataset(clusters=train_cluster,
+    
+    train_dataset = GeneDataset(clusters=train_clusters,
                                 tokenizer=tokenizer,
                                 genes_info=genes_info,
                                 max_input_length=args.max_input_length,
@@ -128,7 +156,7 @@ def train(args):
                                 method=args.method,
                                 prompt=args.prompt,
                                 )
-    eval_dataset = GeneDataset(clusters=val_cluster,
+    eval_dataset = GeneDataset(clusters=val_clusters,
                                tokenizer=tokenizer,
                                genes_info=genes_info,
                                max_input_length=args.max_input_length,
@@ -167,15 +195,12 @@ def train(args):
         eval_dataset=eval_dataset,
         data_collator=partial(collate_fn, tokenizer),
         tokenizer=tokenizer,
+        compute_metrics=partial(compute_metrics, tokenizer=tokenizer),
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
     )
     trainer.train()
-    # evaluate
-    test_clusters = create_data(dataset='kegg',
-                                data_dir=args.data_dir,
-                                n_permutations=0,
-                                negative_frac=0.,
-                                )
-    test_dataset = GeneDataset(clusters=test_clusters,
+    # evaluate in the end
+    test_dataset = GeneDataset(clusters=val_clusters,
                                tokenizer=tokenizer,
                                genes_info=genes_info,
                                max_input_length=args.max_input_length,
@@ -191,10 +216,10 @@ def train(args):
             f_preds.writelines(test_preds[i]+'\n')
             f_labels.writelines(test_labels[i] + '\n')
 
-    metrics = compute_metrics(test_preds, test_labels)
+    metrics = compute_rouge(test_preds, test_labels)
     print(f"ROUGE scores: {metrics}")
-    # for k, v in metrics.items():
-    #     wandb.run.summary[k] = v
+    for k, v in metrics.items():
+        wandb.run.summary[k] = v
 
 
 if __name__ == '__main__':
