@@ -101,6 +101,32 @@ def get_short_clusters(clusters, n_short_subsamples=0):
     return short_clusters
 
 
+def load_orthologs(file_path):
+    orthologs = pd.read_csv(file_path)
+    orthologs_dict = {}
+    for _, row in orthologs.iterrows():
+        gene, ortholog = row['Gene'], row['Ortholog']
+        orthologs_dict.setdefault(gene, []).append(ortholog)
+    return orthologs_dict
+
+def replace_gene_with_ortholog(gene, orthologs_dict, replacement_prob):
+    if gene in orthologs_dict and np.random.rand() < replacement_prob:
+        return np.random.choice(orthologs_dict[gene])
+    return gene
+
+def augment_with_orthologs(clusters, orthologs_file, replacement_prob=0.5, n_augmentations=5):
+    orthologs_dict = load_orthologs(orthologs_file)
+    new_clusters = []
+    
+    for _, row in clusters.iterrows():
+        for _ in range(n_augmentations):
+            new_genes = [replace_gene_with_ortholog(gene, orthologs_dict, replacement_prob) for gene in row['genes']]
+            if new_genes != row['genes']:
+                new_clusters.append({'name': row['name'], 'genes': new_genes,
+                                     'brief': row['brief'], 'full': row['full']})
+    
+    return new_clusters
+
 def augment_data(clusters,
                  id_to_full_description=None,
                  n_permutations=10,
@@ -108,6 +134,9 @@ def augment_data(clusters,
                  negative_frac=0.3,
                  negative_description_strategy='default',
                  placeholder_probability=1,
+                 n_orthologs=0,
+                 orthologs_file="data/orthologs.csv",
+                 orthologs_replacement_prob=0.5,
                  ):
     if n_permutations > 0:
         new_clusters = []
@@ -133,5 +162,10 @@ def augment_data(clusters,
                                                   placeholder_probability=placeholder_probability,
                                                   )
         clusters = pd.concat([clusters.reset_index(drop=True), pd.DataFrame(negative_clusters).reset_index(drop=True)])
+
+    clusters['genes'] = clusters['genes'].apply(lambda x: [int(gene) for gene in x])
+    if n_orthologs > 0:
+        orthologs_clusters = augment_with_orthologs(clusters, orthologs_file, orthologs_replacement_prob, n_orthologs)
+        clusters = pd.concat([clusters.reset_index(drop=True), pd.DataFrame(orthologs_clusters).reset_index(drop=True)])
 
     return clusters

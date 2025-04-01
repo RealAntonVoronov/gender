@@ -1,4 +1,5 @@
 import os
+import json
 from functools import partial
 from argparse import ArgumentParser
 
@@ -46,7 +47,7 @@ def parse_args():
                         help="Prompt that is used to specify the task for the model "
                              "if the fine-tuning method is `hard-prompt`.")
     # generation arguments
-    parser.add_argument("--num_beams", default=3, type=int, help="Number of beams to use in beam search decoding.")
+    parser.add_argument("--num_beams", default=1, type=int, help="Number of beams to use in beam search decoding.")
     # dataset arguments
     parser.add_argument("--n_permutations", default=20, type=int,
                         help="Data augmentation variable. "
@@ -61,12 +62,15 @@ def parse_args():
                              "Default strategy: annotating every cluster with "
                              "'This group of genes does not group into a meaningful cluster.'")
     parser.add_argument("--n_short_subsamples", default=0, type=int)
-    parser.add_argument("--max_input_length", help="Max length of the input sequence.", default=400, type=int)
+    parser.add_argument("--n_orthologs", default=0, type=int)
+    parser.add_argument("--orthologs_replacement_prob", default=0.5, type=float)
+    parser.add_argument("--orthologs_file", default="data/orthologs.csv")
+    parser.add_argument("--max_input_length", help="Max length of the input sequence.", default=800, type=int)
     # training arguments
     parser.add_argument("--train_batch_size", help="Train batch size per 1 GPU.", default=4, type=int)
-    parser.add_argument("--eval_batch_size", help="Validation batch size per 1 GPU.", default=4, type=int)
+    parser.add_argument("--eval_batch_size", help="Validation batch size per 1 GPU.", default=8, type=int)
     parser.add_argument("--learning_rate", "-lr", help="Final learning rate for AdamW optimizer with warmup.",
-                        default=1e-5, type=float)
+                        default=5e-6, type=float)
     parser.add_argument("--gradient_accumulation_steps", default=1, type=int,
                         help="Use this to increase effective train batch size.")
     parser.add_argument("--num_train_epochs", default=4, type=int, help="Number of training epochs.")
@@ -91,17 +95,36 @@ def preprocess_logits_for_metrics(logits, labels):
 
 def compute_metrics(eval_preds, tokenizer):
     preds, labels = eval_preds
-    # Replace -100 in the preds as we can't decode them
-    preds = np.where(labels != -100, preds, tokenizer.eos_token_id)
-    # Decode generated summaries into text
-    decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-    # Replace -100 in the labels as we can't decode them
-    labels = np.where(labels != -100, labels, tokenizer.eos_token_id)
-    # Decode reference summaries into text
-    decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-    rouge = compute_rouge(decoded_preds, decoded_labels)
+    # Create mask for valid labels
+    labels_mask = labels != -100
+    
+    # Shift mask left by 1 to align with predictions
+    preds_mask = np.zeros_like(preds, dtype=bool)
+    preds_mask[:, :-1] = labels_mask[:, 1:]
+    
+    # Mask out input tokens from predictions
+    decoded_preds = np.where(preds_mask, preds, tokenizer.eos_token_id)
+    decoded_preds = tokenizer.batch_decode(decoded_preds, skip_special_tokens=True)
+
+    # Mask out padding from labels
+    decoded_labels = np.where(labels_mask, labels, tokenizer.eos_token_id)
+    decoded_labels = tokenizer.batch_decode(decoded_labels, skip_special_tokens=True)
+    
     wandb.log({"preds_0": decoded_preds[0], "labels_0": decoded_labels[0]})
-    return rouge
+    new_logs = {"preds": preds.tolist(),
+                "labels": labels.tolist(),
+                "decoded_preds": decoded_preds,
+                "decoded_labels": decoded_labels}
+    if os.path.exists("logs.json"):
+        with open("logs.json", "r") as f:
+            logs = json.load(f)
+        logs.append(new_logs)
+    else:
+        logs = [new_logs]
+    with open("logs.json", "w") as f:
+        json.dump(logs, f)
+
+    return compute_rouge(decoded_preds, decoded_labels)
 
 
 def train(args):
@@ -121,6 +144,9 @@ def train(args):
                                   negative_description_strategy=args.negative_description_strategy,
                                   n_short_subsamples=args.n_short_subsamples,
                                   placeholder_probability=1,
+                                  n_orthologs=args.n_orthologs,
+                                  orthologs_file=args.orthologs_file,
+                                  orthologs_replacement_prob=args.orthologs_replacement_prob,
                                   )
     print(len(train_clusters), len(val_clusters))
     genes_info = pd.read_csv(f"{args.data_dir}/genes/genes_info.csv")
@@ -185,13 +211,12 @@ def train(args):
                                prompt=args.prompt,
                                training=False,
                                )
-    test_preds = inference(model, tokenizer, test_dataset, args.eval_batch_size, max_model_length, args.num_beams)
+    test_preds = inference(model, tokenizer, test_dataset, args.eval_batch_size, max_model_length, args.num_beams,
+                           res_path=f"{args.output_dir}/test_preds.json")
     test_labels = tokenizer.batch_decode(test_dataset.output, skip_special_tokens=True)
     assert len(test_preds) == len(test_labels)
-    with open(f"{args.output_dir}/test_preds", "w") as f_preds, open(f"{args.output_dir}/test_labels", "w") as f_labels:
-        for i in range(len(test_preds)):
-            f_preds.writelines(test_preds[i]+'\n')
-            f_labels.writelines(test_labels[i] + '\n')
+    with open(f"{args.output_dir}/test_labels.json", "w") as f_labels:
+        json.dump(test_labels, f_labels, indent=2)
 
     metrics = compute_rouge(test_preds, test_labels)
     print(f"ROUGE scores: {metrics}")
