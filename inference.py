@@ -6,8 +6,8 @@ import pandas as pd
 from transformers import BioGptForCausalLM, BioGptTokenizer, DataCollatorForSeq2Seq
 from torch.utils.data import DataLoader
 
-from data import GeneDataset, parse_dataset
-
+from data_utils import parse_dataset
+from dataset import GeneDataset
 
 @torch.inference_mode()
 def generate(model, tokenizer, batch, max_length=1024, num_beams=1):

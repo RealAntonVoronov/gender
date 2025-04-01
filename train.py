@@ -2,26 +2,18 @@ import os
 from functools import partial
 from argparse import ArgumentParser
 
-import evaluate
-import nltk
 import numpy as np
 import pandas as pd
 import torch
 import wandb
-from nltk.tokenize import sent_tokenize
 from sklearn.model_selection import train_test_split
 from transformers import (BioGptTokenizer, BioGptForCausalLM,
                           Trainer, TrainingArguments)
-from datasets import Dataset
-from tqdm import tqdm, trange
 
 from data_utils import create_data, augment_data
 from dataset import GeneDataset
+from evaluation import compute_rouge
 from inference import inference
-
-nltk.download('punkt')
-nltk.download('punkt_tab')
-rouge_score = evaluate.load("rouge")
 
 
 def collate_fn(tokenizer, batch):
@@ -77,7 +69,7 @@ def parse_args():
                         default=1e-5, type=float)
     parser.add_argument("--gradient_accumulation_steps", default=1, type=int,
                         help="Use this to increase effective train batch size.")
-    parser.add_argument("--num_train_epochs", default=8, type=int, help="Number of training epochs.")
+    parser.add_argument("--num_train_epochs", default=4, type=int, help="Number of training epochs.")
     parser.add_argument("--seed", help='Seed for reproducibility.', default=37, type=int)
     # utility arguments
     parser.add_argument("--exp_name", default=None,
@@ -91,21 +83,6 @@ def parse_args():
     return args
 
 
-def compute_rouge(preds, labels):
-    # decoded_preds = ["\n".join(pred.strip()) for pred in preds]
-    # print(decoded_preds[0])
-    # decoded_labels = ["\n".join(label.strip()) for label in labels]
-    # Compute ROUGE scores
-    result = rouge_score.compute(
-        predictions=preds,
-        references=labels,
-        use_stemmer=True
-    )
-    # Extract the median scores
-    result = {key: value * 100 for key, value in result.items()}
-    return {k: round(v, 4) for k, v in result.items()}
-
-
 def preprocess_logits_for_metrics(logits, labels):
     if isinstance(logits, tuple):
         logits = logits[0]
@@ -115,16 +92,16 @@ def preprocess_logits_for_metrics(logits, labels):
 def compute_metrics(eval_preds, tokenizer):
     preds, labels = eval_preds
     # Replace -100 in the preds as we can't decode them
-    preds = np.where(preds != -100, preds, tokenizer.pad_token_id)
+    preds = np.where(labels != -100, preds, tokenizer.eos_token_id)
     # Decode generated summaries into text
     decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
     # Replace -100 in the labels as we can't decode them
-    labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+    labels = np.where(labels != -100, labels, tokenizer.eos_token_id)
     # Decode reference summaries into text
     decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
     rouge = compute_rouge(decoded_preds, decoded_labels)
     wandb.log({"preds_0": decoded_preds[0], "labels_0": decoded_labels[0]})
-    return rouge 
+    return rouge
 
 
 def train(args):

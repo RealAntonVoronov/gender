@@ -107,7 +107,7 @@ def augment_data(clusters,
                  n_short_subsamples=0,
                  negative_frac=0.3,
                  negative_description_strategy='default',
-                 placeholder_probability=0.5,
+                 placeholder_probability=1,
                  ):
     if n_permutations > 0:
         new_clusters = []
@@ -120,13 +120,18 @@ def augment_data(clusters,
         clusters = pd.concat([clusters, pd.DataFrame(new_clusters).reset_index(drop=True)])
 
     # augmentation for better short clusters
-    short_clusters = get_short_clusters(clusters, n_short_subsamples)
-    clusters = pd.concat([clusters, pd.DataFrame(short_clusters).reset_index(drop=True)])
+    if n_short_subsamples > 0:
+        short_clusters = get_short_clusters(clusters, n_short_subsamples)
+        clusters = pd.concat([clusters, pd.DataFrame(short_clusters).reset_index(drop=True)])
 
     # add negative samples
-    negative_clusters = get_negative_clusters(clusters, id_to_full_description,
-                                             negative_frac, negative_description_strategy,
-                                             placeholder_probability)
-    clusters = pd.concat([clusters.reset_index(drop=True), pd.DataFrame(negative_clusters).reset_index(drop=True)])
+    if negative_frac > 0:
+        negative_clusters = get_negative_clusters(clusters,
+                                                  id_to_full_description=id_to_full_description,
+                                                  negative_frac=negative_frac,
+                                                  negative_description_strategy=negative_description_strategy,
+                                                  placeholder_probability=placeholder_probability,
+                                                  )
+        clusters = pd.concat([clusters.reset_index(drop=True), pd.DataFrame(negative_clusters).reset_index(drop=True)])
 
     return clusters
