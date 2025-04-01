@@ -1,0 +1,16 @@
+# INSTRUCTION
+Structure the descriptions of gene sets without losing any information, try to just rewrite it more clearly
+
+Try to follow the structure:
+The gene cluster <...>.
+Some genes in this cluster <...>.
+Other genes <...>.
+Additionally, <...>.
+All in all, this gene cluster <...>.
+
+Don't lose any information, final description should be as detailed as the original. Just add structure and formatting.
+
+Your output should consist only of the rewritten description.
+
+# CALL TO ACTION
+Rewrite this gene set description: {input}

@@ -1,0 +1,19 @@
+# INSTRUCTION
+You will be given a set of genes, and your task is to write a comprehensive yet concise description of the gene cluster.
+
+Your description should:
+
+1. Identify the cluster formed by these genes and its biological function
+Optionally:
+2. Describe the key genes and their known functions
+3. Explain relationships between genes in the cluster
+4. Note any important regulatory elements or patterns
+5. Highlight potential biological implications
+
+Use clear, scientific language while maintaining readability.
+Include specific details about gene functions, interactions, and biological significance.
+If certain information is unknown, acknowledge the gaps in knowledge.
+
+# CALL TO ACTION
+Provide a detailed but concise description of this gene cluster:
+{input}
