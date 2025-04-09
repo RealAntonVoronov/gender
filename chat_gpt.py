@@ -44,7 +44,7 @@ if __name__ == "__main__":
 
     elif args.task == "structure_output":
         with open(args.input_file) as f:
-            inputs = f.readlines()
+            inputs = json.load(f)
 
         with open("prompts/structure_output.txt") as f:
             template = f.read()
@@ -65,6 +65,3 @@ if __name__ == "__main__":
 
         with open(args.output_file, "w") as f:
             json.dump(gpt_responses, f)
-
-        if i == 0:
-            break
