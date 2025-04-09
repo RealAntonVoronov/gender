@@ -1,7 +1,9 @@
-import pandas as pd
+import argparse
 import json
-import nltk
+
 import evaluate
+import nltk
+import pandas as pd
 from nltk.tokenize import sent_tokenize
 
 nltk.download('punkt')
@@ -25,10 +27,15 @@ def compute_rouge(preds, labels):
     return {k: round(v, 4) for k, v in result.items()}
 
 
-model_dir = "results/biocarta_kegg-large-perm20-neg0.01-add_rouge/"
 if __name__ == "__main__":
-    with open(f"{model_dir}/test_preds", "r") as f:
-        last_preds = f.readlines()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--preds_file", required=True)
+    parser.add_argument("--labels_file", required=False)
+    args = parser.parse_args()
+    with open(args.preds_file) as f:
+        preds = json.load(f)
 
-    labels = pd.read_csv("data/test/val_clusters.csv")["full"]
-    print(compute_rouge(last_preds, labels))
+    labels = pd.read_csv("data/test/val_clusters.csv")["full"].tolist()
+
+    for k, v in compute_rouge(preds, labels).items():
+        print(f"{k}: {v.item()}")
