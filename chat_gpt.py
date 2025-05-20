@@ -13,7 +13,8 @@ def get_gpt_response(client, gpt_input):
         model=args.model,
         messages=[{"role": "system", "content": DEFAULT_GPT_PROMPT},
                   {"role": "user", "content": gpt_input},
-                  ]
+                  ],
+        temperature=0.0,
     )
     return response.choices[0].message.content
 
@@ -44,7 +45,7 @@ if __name__ == "__main__":
 
     elif args.task == "structure_output":
         with open(args.input_file) as f:
-            inputs = f.readlines()
+            inputs = json.load(f)
 
         with open("prompts/structure_output.txt") as f:
             template = f.read()
@@ -64,7 +65,4 @@ if __name__ == "__main__":
         gpt_responses.append(response)
 
         with open(args.output_file, "w") as f:
-            json.dump(gpt_responses, f)
-
-        if i == 0:
-            break
+            json.dump(gpt_responses, f, indent=2)
