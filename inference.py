@@ -1,3 +1,4 @@
+import json
 from argparse import ArgumentParser
 from tqdm import tqdm
 
@@ -24,7 +25,7 @@ def generate(model, tokenizer, batch, max_length=1024, num_beams=1):
     return tokenizer.batch_decode(output, skip_special_tokens=True)
 
 
-def inference(model, tokenizer, test_dataset, eval_batch_size=1, max_model_length=1024, num_beams=1, res_path="out.txt"):
+def inference(model, tokenizer, test_dataset, eval_batch_size=1, max_model_length=1024, num_beams=1, res_path="output.json"):
     test_collator = DataCollatorForSeq2Seq(tokenizer)
     test_dataloader = DataLoader(test_dataset, batch_size=eval_batch_size, collate_fn=test_collator, shuffle=False)
 
@@ -33,7 +34,7 @@ def inference(model, tokenizer, test_dataset, eval_batch_size=1, max_model_lengt
         test_preds = generate(model, tokenizer, batch, max_length=max_model_length, num_beams=num_beams)
         results.extend(test_preds)
         with open(res_path, "w") as f:
-            f.writelines("\n".join(results))
+            json.dump(results, f, indent=2)
     
     return results
 
@@ -69,22 +70,23 @@ def main(args):
         test_clusters = parse_dataset(args.test_dataset)
         test_clusters.to_csv("input.csv", index=False)
     else:
-        if args.test_file.endswith('.tsv'):
-            sep = '\t'
-        else:
-            sep = ','
-        test_dataframe = pd.read_csv(args.test_file, sep=sep)
-        test_dataframe = test_dataframe.loc[test_dataframe['cluster'] != 'Singleton']
-        test_dataframe['cluster'] = test_dataframe['cluster'].astype(int)
+        # if args.test_file.endswith('.tsv'):
+        #     sep = '\t'
+        # else:
+        #     sep = ','
+        # test_dataframe = pd.read_csv(args.test_file, sep=sep)
+        # test_dataframe = test_dataframe.loc[test_dataframe['cluster'] != 'Singleton']
+        # test_dataframe['cluster'] = test_dataframe['cluster'].astype(int)
 
-        symbol_to_id = {row['symbol']: row['ncbi_id'] for _, row in genes_info.iterrows()}
+        # symbol_to_id = {row['symbol']: row['ncbi_id'] for _, row in genes_info.iterrows()}
 
-        test_clusters = []
-        for cluster_idx, group in test_dataframe.groupby('cluster'):
-            test_clusters.append({'name': f'test cluster {cluster_idx}',
-                                'genes': [symbol_to_id.get(symbol, -1) for symbol in group['gene'].tolist()],
-                                })
-        test_clusters = pd.DataFrame(test_clusters)
+        # test_clusters = []
+        # for cluster_idx, group in test_dataframe.groupby('cluster'):
+        #     test_clusters.append({'name': f'test cluster {cluster_idx}',
+        #                         'genes': [symbol_to_id.get(symbol, -1) for symbol in group['gene'].tolist()],
+        #                         })
+        # test_clusters = pd.DataFrame(test_clusters)
+        test_clusters = pd.read_csv(args.test_file)
 
     test_dataset = GeneDataset(clusters=test_clusters,
                                tokenizer=tokenizer,
@@ -93,9 +95,12 @@ def main(args):
                                max_model_length=max_model_length,
                                training=False,
                                )
-    test_preds = inference(model, tokenizer, test_dataset, eval_batch_size=args.eval_batch_size,
-                           max_model_length=max_model_length, num_beams=args.num_beams,
+    test_preds = inference(model, tokenizer, test_dataset,
+                           eval_batch_size=args.eval_batch_size,
+                           max_model_length=max_model_length,
+                           num_beams=args.num_beams,
                            res_path=args.output_file,
+                           max_input_length=args.max_input_length,
                            )
 
 if __name__ == '__main__':

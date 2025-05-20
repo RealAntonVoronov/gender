@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument("--dataset", required=True, choices=['biocarta', 'kegg', 'wp', 'pid', 'reactome'], nargs='+',
                         help="Dataset for fine-tuning and evaluation")
     parser.add_argument("--data_dir", required=True, help='Path to the folder with clusters and gene annotations.')
+    parser.add_argument("--full_train", action="store_true")
     parser.add_argument("--method", default='hard_prompt',
                         help='Method of fine-tuning. '
                              'Hard-prompt requires specifying prompt which is later used in every example. '
@@ -111,18 +112,18 @@ def compute_metrics(eval_preds, tokenizer):
     decoded_labels = tokenizer.batch_decode(decoded_labels, skip_special_tokens=True)
     
     wandb.log({"preds_0": decoded_preds[0], "labels_0": decoded_labels[0]})
-    new_logs = {"preds": preds.tolist(),
-                "labels": labels.tolist(),
-                "decoded_preds": decoded_preds,
-                "decoded_labels": decoded_labels}
-    if os.path.exists("logs.json"):
-        with open("logs.json", "r") as f:
-            logs = json.load(f)
-        logs.append(new_logs)
-    else:
-        logs = [new_logs]
-    with open("logs.json", "w") as f:
-        json.dump(logs, f)
+    # new_logs = {"preds": preds.tolist(),
+    #             "labels": labels.tolist(),
+    #             "decoded_preds": decoded_preds,
+    #             "decoded_labels": decoded_labels}
+    # if os.path.exists("logs.json"):
+    #     with open("logs.json", "r") as f:
+    #         logs = json.load(f)
+    #     logs.append(new_logs)
+    # else:
+    #     logs = [new_logs]
+    # with open("logs.json", "w") as f:
+    #     json.dump(logs, f)
 
     return compute_rouge(decoded_preds, decoded_labels)
 
@@ -134,8 +135,11 @@ def train(args):
     max_model_length = model.config.max_position_embeddings
 
     clusters = create_data(dataset=args.dataset, data_dir=args.data_dir)
-    train_clusters, val_clusters = train_test_split(clusters, random_state=args.seed, test_size=0.2)
-    val_clusters.to_csv(f"{args.data_dir}/test/val_clusters.csv", index=False)
+    if args.full_train:
+        train_clusters = clusters
+    else:
+        train_clusters, val_clusters = train_test_split(clusters, random_state=args.seed, test_size=0.2)
+        val_clusters.to_csv(f"{args.data_dir}/test/val_clusters.csv", index=False)
     genes_full_description = pd.read_csv(f"{args.data_dir}/genes/gene_descriptions.csv")
     train_clusters = augment_data(train_clusters,
                                   id_to_full_description=genes_full_description,
@@ -148,6 +152,9 @@ def train(args):
                                   orthologs_file=args.orthologs_file,
                                   orthologs_replacement_prob=args.orthologs_replacement_prob,
                                   )
+    if args.full_train:
+        # split after augmentation, so we have a leak in validation set but the full dataset is used for training
+        train_clusters, val_clusters = train_test_split(train_clusters, random_state=args.seed, test_size=0.2)
     print(len(train_clusters), len(val_clusters))
     genes_info = pd.read_csv(f"{args.data_dir}/genes/genes_info.csv")
     
